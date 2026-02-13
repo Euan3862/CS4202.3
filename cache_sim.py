@@ -1,69 +1,86 @@
 import json
 import sys
 
-if len(sys.argv) < 3:
-    print("Usage: python app.py <config.json> <trace.txt>")
-    sys.exit(1)
+def parse_config_file():
+        if len(sys.argv) < 3:
+            print("Usage: python cache_sim.py <config.json> <trace_file>")
+            sys.exit(1)
 
-file_path = sys.argv[1]
-trace_file = sys.argv[2]
+        file_path = sys.argv[1]
 
+        try:
+            with open(file_path, 'r') as file:
+                data = json.load(file)
 
-try:
-    with open(file_path, 'r') as file:
-        data = json.load(file)
-    # print("File data =", data)
+        except FileNotFoundError:
+            print("Error: The file:", file_path, "was not found.", file=sys.stderr)
+            sys.exit(1)
 
-except FileNotFoundError:
-    print("Error: The file 'data.json' was not found.")
-
-data = data["caches"]
-data_length = len(data)
-
-# for x in data:
-    # print(x.get("name"))
-    # print(x.get("size"))
-    # print(x.get("line_size"))
-    # print(x.get("kind"))
-
-    # if (len(x) > 4):
-        # print(x.get("replacement_policy"))
-
-line_count = 1
-traces = []
-try:
-    with open(trace_file, 'r') as tfile:
-        for line in tfile:
-            traces.append(line)
-
-except FileNotFoundError:
-    print("Error: The file 'data.json' was not found.")
+        data = data["caches"]
+        return data
 
 
+def direct_mapped(data):
+    hit_count = 0
+    miss_count = 0
 
-#Best data structure for a cache is a list of sets 
-#where each set is a dict mapping tag -> metadata
+    cache_size = data[0].get("size")
+    line_size = data[0].get("line_size")
+    total_cache_lines = cache_size // line_size
 
-#Create cache, fill it, deal with edge cases, keep track of work!
-print(data)
-cache_size = data[0].get("size")
-line_size = data[0].get("line_size")
-print(cache_size)
+    valid = bytearray(total_cache_lines) # Faster than an array for storing booleans
+    tags = [0] * total_cache_lines
 
-total_cache_lines = cache_size / line_size
-print(int(total_cache_lines))
+    trace_file = sys.argv[2]
 
-# Cache line of memory address 
-# = (Block Address) % (Number of lines in cache)
+    try:  # Deal with tracefiles line by line rather than storing then processing ie streaming
+        with open(trace_file, 'r') as tfile:
+            for line in tfile:
+                trace_line = line.split()
+                memory_address = int(trace_line[1], 16)
+                memory_size = int(trace_line[3])
 
-trace_line = traces[0].split(" ")
-memory_address = trace_line[1]
-memory_size = trace_line[3]
+                start_block = memory_address // line_size
+                end_block = (memory_address + memory_size - 1) // line_size
 
-memory_address = int(memory_address, 16)
-print(memory_address, memory_size)
+                for block in range(start_block, end_block + 1):
+                    index = block % total_cache_lines  # Which cache line the block maps to
+                    tag = block // total_cache_lines   # Tag identifies which block is in that line
+                    
+                    if valid[index] == 0: # If false
+                        miss_count += 1
+                        valid[index] = 1 # Set to true
+                        tags[index] = tag
 
-cache_line = memory_address % total_cache_lines
-print(int(cache_line))
+                    elif tag == tags[index]:
+                        hit_count += 1
+                    else:
+                        tags[index] = tag
+                        miss_count += 1
 
-#Need to deal with the case where mem address spans multiple blocks
+    except FileNotFoundError:
+        print("Error: The file:", trace_file, "was not found.", file=sys.stderr)
+        sys.exit(1)
+
+    return hit_count, miss_count
+
+def json_results(hit_count, miss_count, data):
+    results = { 
+        "caches": [
+            {"hits": hit_count,
+            "misses": miss_count,
+            "name": data[0].get("name")}
+        ],
+        "main_memory_accesses": miss_count
+    }
+    # Need to add support for multiple caches!
+    output = json.dumps(results, indent=2)
+    print(output, file=sys.stdout)
+
+def main():
+    data = parse_config_file()
+    hit_count, miss_count = direct_mapped(data)
+    json_results(hit_count, miss_count, data)
+
+if __name__=="__main__":
+    main()

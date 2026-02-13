@@ -1,10 +1,11 @@
+
 {
-"caches": [
-{
-"name": "L1",
-"size": 32768,
-"line_size": 32,
-"kind": "direct"
-}
-]
+  "caches": [
+    {
+      "name": "direct",
+      "size": 32768,
+      "line_size": 64,
+      "kind": "direct"
+    }
+  ]
 }
