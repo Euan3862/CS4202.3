@@ -1,5 +1,8 @@
 import sys
 
+# Implement least recently used, dictionary keeping track of timings
+# and use the oldest timing ie number. Remember to update timings during
+# EVERY hit and EVERY miss!
 
 def direct(block, total_cache_lines, valid, tags):
     index = block % total_cache_lines
@@ -15,11 +18,16 @@ def direct(block, total_cache_lines, valid, tags):
         tags[index] = tag
         return False
 
-
-def full_associative(block, total_cache_lines, valid, tags, rp, rr_state, lru_ordering):
+# LFU tie break line with smallest index wins
+def full_associative(block, total_cache_lines, valid, tags, rp, rr_state, lru_state, lru_index, lfu_state):
     tag = block
     for i in range(total_cache_lines):  # Scan all cache lines for a hit.
-        if tags[i] == tag:
+        if tags[i] == tag and valid[i]:
+            if (rp == "lru"):
+                lru_state[i] = lru_index[0]
+                lru_index[0] += 1
+            elif (rp == "lfu" and i in lfu_state):
+                lfu_state[i] += 1
             return True
 
     for i in range(total_cache_lines):  # If no hit found, then search for an empty cache line to fill and return a miss
@@ -27,31 +35,48 @@ def full_associative(block, total_cache_lines, valid, tags, rp, rr_state, lru_or
             valid[i] = 1
             tags[i] = tag
             if (rp == "lru"):
-                lru_ordering[lru_index] = i
-                lru_index += 1
+                lru_state[i] = lru_index[0]
+                lru_index[0] += 1
+            elif (rp == "lfu"):
+                lfu_state[i] = 1
             return False
 
-    if (rp == "rr"):
+    if (rp == "lru"):
+        victim = lru(lru_state)
+    elif (rp == "lfu"):
+        victim = lfu(lfu_state)
+    elif (rp == "rr"): # Resort to round robin if no replacement policy provided
         victim = round_robin(total_cache_lines, rr_state)
-    elif (rp == "lru"):
-        victim = lru(lru_ordering)
 
-    valid[victim] = 1
+    valid[victim] = 1  
     tags[victim] = tag
+
+    if (rp == "lru"):
+        lru_state[victim] = lru_index[0]
+        lru_index[0] += 1
+    if (rp == "lfu"):
+        lfu_state[victim] = 1
+    
     return False
+
 
 def round_robin(total_cache_lines, rr_state):
     victim = rr_state[0]
     rr_state[0] = (rr_state[0] + 1) % total_cache_lines
     return victim
 
-
-lru_index = 0
-def lru(lru_ordering):  # Least recently used replacement policy
-    global lru_index
-    victim = min(lru_ordering, key=lru_ordering.get(lru_index))
+def lru(lru_state):  # Least recently used replacement policy
+    victim = min(lru_state, key=lru_state.get) # Victim is the cache line with the minimum lru_index value
     return victim
 
+def lfu(lfu_list):
+    minimum = min(lfu_list.values())
+    
+    matching_minimum = {key : val for key, val in lfu_list.items() if val == minimum}
+    victim = min(matching_minimum)
+    return victim
+
+# LRU use a list and append and remove, first element needs evicted
 
 def sim_cache(data, cache_count):
     trace_file = sys.argv[2]
@@ -66,7 +91,10 @@ def sim_cache(data, cache_count):
     kind_1 = data[0]["kind"]
     rp_1 = data[0]["replacement_policy"]
     rr_state_1 = [0]
-    lru_ordering_1 = {}
+    lru_state_1 = {}
+    lru_index_1 = [0]
+    lfu_state_1 = {}
+
 
     # L2 cache
     if cache_count >= 2:
@@ -78,10 +106,11 @@ def sim_cache(data, cache_count):
         hit_count_2 = miss_count_2 = 0
         kind_2 = data[1]["kind"]
         rp_2 = data[1]["replacement_policy"]
-        lru_ordering_2 = {}
         rr_state_2 = [0]
-        if (rp_2 == "lru"):
-            lru_state_2 = {}
+        lru_state_2 = {}
+        lru_index_2 = [0]
+        lfu_state_2 = {}
+
 
     # L3 cache
     if cache_count == 3:
@@ -94,7 +123,10 @@ def sim_cache(data, cache_count):
         kind_3 = data[2]["kind"]
         rp_3 = data[2]["replacement_policy"]
         rr_state_3 = [0]
-        lru_ordering_3 = {}
+        lru_state_3 = {}
+        lru_index_3 = [0]
+        lfu_state_3 = {}
+
 
     try:
         with open(trace_file, "r") as tfile:
@@ -111,7 +143,7 @@ def sim_cache(data, cache_count):
                     if (kind_1 == "direct"):
                         l1_hit = direct(block1, total_cache_lines_1, valid_1, tags_1)
                     elif (kind_1 == "full"):
-                        l1_hit = full_associative(block1, total_cache_lines_1, valid_1, tags_1, rp_1,rr_state_1, lru_ordering_1)
+                        l1_hit = full_associative(block1, total_cache_lines_1, valid_1, tags_1, rp_1,rr_state_1, lru_state_1, lru_index_1, lfu_state_1)
 
                     if l1_hit:
                         hit_count_1 += 1
@@ -126,7 +158,7 @@ def sim_cache(data, cache_count):
                         if (kind_2 == "direct"):
                             l2_hit = direct(block2, total_cache_lines_2, valid_2, tags_2)
                         elif (kind_2 == "full"):
-                            l2_hit = full_associative(block2, total_cache_lines_2, valid_2, tags_2, rp_2,rr_state_2, lru_ordering_2)
+                            l2_hit = full_associative(block2, total_cache_lines_2, valid_2, tags_2, rp_2,rr_state_2, lru_state_2, lru_index_2, lfu_state_2)
 
                         if l2_hit:
                             hit_count_2 += 1
@@ -140,7 +172,7 @@ def sim_cache(data, cache_count):
                                 if (kind_3 == "direct"):
                                     l3_hit = direct(block3, total_cache_lines_3, valid_3, tags_3)
                                 elif (kind_3 == "full"):
-                                    l3_hit = full_associative(block3, total_cache_lines_3, valid_3, tags_3, rp_3,rr_state_3, lru_ordering_3)
+                                    l3_hit = full_associative(block3, total_cache_lines_3, valid_3, tags_3, rp_3,rr_state_3, lru_state_3, lru_index_3, lfu_state_3)
 
                                 if l3_hit:
                                     hit_count_3 += 1
