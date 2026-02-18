@@ -1,0 +1,2 @@
+mcf.trace
+*.trace # optional if you have many traces
