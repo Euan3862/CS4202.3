@@ -1,2 +1,3 @@
 mcf.trace
 *.trace # optional if you have many traces
+./_pycache_
