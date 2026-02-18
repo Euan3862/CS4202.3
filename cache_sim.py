@@ -59,6 +59,9 @@ def full_associative(block, total_cache_lines, valid, tags, rp, rr_state, lru_st
     
     return False
 
+def n_way_associative(set_count):
+    
+
 
 def round_robin(total_cache_lines, rr_state):
     victim = rr_state[0]
