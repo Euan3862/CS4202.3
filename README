@@ -1,0 +1,2 @@
+Please run the codebase using:
+pypy3 -O main.py <config.file> <trace.file>
