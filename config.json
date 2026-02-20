@@ -4,8 +4,8 @@
             "name": "2way",
             "size": 32768,
             "line_size": 64,
-            "kind": "full",
-            "replacement_policy": "rr"
+            "kind": "direct"
+            
         }
     ]
 }

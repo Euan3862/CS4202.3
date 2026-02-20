@@ -2,7 +2,6 @@ import sys
 from parse_config import parse_config_file
 from cache_sim import sim_cache
 from results_json import json_results
-from cache_sim import n_set_associative
 
 def main():
     data, cache_count = parse_config_file()
