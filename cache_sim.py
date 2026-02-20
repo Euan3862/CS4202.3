@@ -1,4 +1,5 @@
 import sys
+import operator as op
 
 # Implement least recently used, dictionary keeping track of timings
 # and use the oldest timing ie number. Remember to update timings during
@@ -22,11 +23,11 @@ def direct(block, total_cache_lines, valid, tags):
 def full_associative(block, total_cache_lines, valid, tags, rp, rr_state, lru_state, lru_index, lfu_state):
     tag = block
     for i in range(total_cache_lines):  # Scan all cache lines for a hit.
-        if tags[i] == tag and valid[i]:
+        if (tags[i] == tag and valid[i]):
             if (rp == "lru"):
                 lru_state[i] = lru_index[0]
                 lru_index[0] += 1
-            elif (rp == "lfu" and i in lfu_state):
+            elif (rp == "lfu"):
                 lfu_state[i] += 1
             return True
 
@@ -43,26 +44,67 @@ def full_associative(block, total_cache_lines, valid, tags, rp, rr_state, lru_st
 
     if (rp == "lru"):
         victim = lru(lru_state)
-    elif (rp == "lfu"):
-        victim = lfu(lfu_state)
-    elif (rp == "rr"): # Resort to round robin if no replacement policy provided
-        victim = round_robin(total_cache_lines, rr_state)
-
-    valid[victim] = 1  
-    tags[victim] = tag
-
-    if (rp == "lru"):
         lru_state[victim] = lru_index[0]
         lru_index[0] += 1
-    if (rp == "lfu"):
+    elif (rp == "lfu"):
+        victim = lfu(lfu_state)
         lfu_state[victim] = 1
-    
+    elif (rp == "rr"): # Resort to round robin if no replacement policy provided
+        victim = round_robin(total_cache_lines, rr_state)
+        valid[victim] = 1  
+        tags[victim] = tag
+ 
     return False
 
-def n_way_associative(set_count):
+
+def n_set_associative(block, total_cache_lines, valid, rp, rr_state, lfu_state, n_ways, number_of_sets, set_state, inner_index, n_lru_index, n_lru_state):
+    print("Lock in")
+    index = block % (number_of_sets)
+    tag = block // number_of_sets
+
+    if not valid[index]:     # If cache line is empty, then fill line and return a miss (False).
+        valid[index] = 1
+        set_state[index][inner_index[index][0]] = tag
+        inner_index[index][0] += 1
+        if (rp == "lru"):
+            n_lru_state[index][inner_index[index][0]] = n_lru_index[index][0]
+            n_lru_index[index][0] += 1
+
+        elif (rp == "lfu"):
+            lfu_state[index][inner_index[index][0]] = 1
+
+        return False
     
+    elif (tag in set_state[index].values()): # If matching cache line exists, then return a hit (True).
+        if (rp == "lru"):
+            n_lru_index[0] += 1
+            n_lru_state[index][inner_index[index][0]] = n_lru_index[0]
+        if (rp == "lfu"):
+            lfu_state[index][inner_index[index][0]] += 1
+        return True
+    
+    elif (valid[index] and inner_index[index][0] < n_ways): # If cache line is valid, and not a matching tag then update cache line and return a miss (False).
+        set_state[index][inner_index[0]] = tag
+        inner_index[index][0] += 1
+        if (rp == "lru"):
+            n_lru_index[index][0] += 1
+            n_lru_state[index][inner_index[index][0]] = n_lru_index[0]
+        if (rp == "lfu"):
+            lfu_state[index][inner_index[index][0]] += 1
+        return False
+    
+    # Otherwise, the cache set is full
+    if (rp == "lru"):
+        victim = lru(n_lru_state)
+        set_state[index][inner_index[victim]] = tag
+    elif (rp == "lfu"):
+        victim = lfu(lfu_state)
+        set_state[index][inner_index[victim]] = tag
+    elif (rp == "rr"): # Resort to round robin if no replacement policy provided
+        victim = round_robin(total_cache_lines, rr_state)
+        set_state[index][inner_index[victim]] = tag
 
-
+    
 def round_robin(total_cache_lines, rr_state):
     victim = rr_state[0]
     rr_state[0] = (rr_state[0] + 1) % total_cache_lines
@@ -74,7 +116,6 @@ def lru(lru_state):  # Least recently used replacement policy
 
 def lfu(lfu_list):
     minimum = min(lfu_list.values())
-    
     matching_minimum = {key : val for key, val in lfu_list.items() if val == minimum}
     victim = min(matching_minimum)
     return victim
@@ -92,12 +133,22 @@ def sim_cache(data, cache_count):
     tags_1 = [0] * total_cache_lines_1
     hit_count_1 = miss_count_1 = 0
     kind_1 = data[0]["kind"]
+    name_1 = data[0]["name"]
     rp_1 = data[0]["replacement_policy"]
     rr_state_1 = [0]
     lru_state_1 = {}
     lru_index_1 = [0]
     lfu_state_1 = {}
 
+    # if (kind == "2way"):
+    set_size_1 = int(name_1[:1])
+    number_of_sets_1 = total_cache_lines_1 // set_size_1
+    n_lru_index = [{} for _ in range(number_of_sets_1)]
+    n_lru_state_1 = [{} for _ in range(number_of_sets_1)]
+    inner_index = [[0] for _ in range(number_of_sets_1)]
+    set_state_1 = [{} for _ in range(number_of_sets_1)] 
+    
+    
 
     # L2 cache
     if cache_count >= 2:
@@ -134,7 +185,7 @@ def sim_cache(data, cache_count):
     try:
         with open(trace_file, "r") as tfile:
             for line in tfile:
-                trace_line = line.split(maxsplit=3)
+                trace_line = line.split(maxsplit=3) # OPTIMISE
 
                 memory_address = int(trace_line[1], 16)
                 memory_size = int(trace_line[3])
@@ -146,7 +197,10 @@ def sim_cache(data, cache_count):
                     if (kind_1 == "direct"):
                         l1_hit = direct(block1, total_cache_lines_1, valid_1, tags_1)
                     elif (kind_1 == "full"):
-                        l1_hit = full_associative(block1, total_cache_lines_1, valid_1, tags_1, rp_1,rr_state_1, lru_state_1, lru_index_1, lfu_state_1)
+                        l1_hit = full_associative(block1, total_cache_lines_1, valid_1, tags_1, rp_1 ,rr_state_1, lru_state_1, lru_index_1, lfu_state_1)
+                    elif (op.contains("way", kind_1)):
+                        l1_hit = n_set_associative(block1, total_cache_lines_1, valid_1, rp_1, rr_state_1, lfu_state_1, set_size_1, number_of_sets_1, set_state_1, inner_index, n_lru_index, n_lru_state_1)
+
 
                     if l1_hit:
                         hit_count_1 += 1
