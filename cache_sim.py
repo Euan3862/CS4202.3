@@ -51,8 +51,8 @@ def full_associative(block, total_cache_lines, valid, tags, rp, rr_state, lru_st
         lfu_state[victim] = 1
     elif (rp == "rr"): # Resort to round robin if no replacement policy provided
         victim = round_robin(total_cache_lines, rr_state)
-        valid[victim] = 1  
-        tags[victim] = tag
+    valid[victim] = 1
+    tags[victim] = tag
  
     return False
 
@@ -125,92 +125,100 @@ def lfu(lfu_list):
             victim = index
     return victim
 
+def build_cache(cache_config):
+    cache_size = cache_config["size"]
+    line_size = cache_config["line_size"]
+    total_lines = cache_size // line_size
+    kind = cache_config["kind"]
+    replacement_policy = cache_config.get("replacement_policy", "rr")
+
+    cache_state = {
+        "name": cache_config["name"],
+        "kind": kind,
+        "rp": replacement_policy,
+        "line_size": line_size,
+        "lines": total_lines,
+        "hits": 0,
+        "misses": 0,
+    }
+
+    if kind == "direct":
+        cache_state["valid"] = bytearray(total_lines)
+        cache_state["tags"] = [0] * total_lines
+        return cache_state
+
+    if "way" in kind:
+        ways = int(kind.split("way", maxsplit=1)[0])
+        set_count = total_lines // ways
+
+        cache_state["ways"] = ways
+        cache_state["set_count"] = set_count
+        cache_state["set_valid"] = bytearray(set_count)
+        cache_state["set_tags"] = [[-1] * ways for _ in range(set_count)]
+        cache_state["used_ways"] = [[0] for _ in range(set_count)]
+        cache_state["set_rr_state"] = [[0] for _ in range(set_count)]
+
+        if replacement_policy == "lru":
+            cache_state["set_lru_index"] = [[0] for _ in range(set_count)]
+            cache_state["set_lru_state"] = [[0] * ways for _ in range(set_count)]
+        elif replacement_policy == "lfu":
+            cache_state["set_lfu_state"] = [[0] * ways for _ in range(set_count)]
+        return cache_state
+
+    cache_state["valid"] = bytearray(total_lines)
+    cache_state["tags"] = [0] * total_lines
+    cache_state["rr_state"] = [0]
+    cache_state["lru_state"] = {}
+    cache_state["lru_index"] = [0]
+    cache_state["lfu_state"] = {}
+    return cache_state
+
+def access_cache(cache_state, block):
+    kind = cache_state["kind"]
+    rp = cache_state["rp"]
+
+    if kind == "direct":
+        return direct(
+            block,
+            cache_state["lines"],
+            cache_state["valid"],
+            cache_state["tags"],
+        )
+
+    if "way" in kind:
+        return n_set_associative(
+            block,
+            cache_state["lines"],
+            cache_state["set_valid"],
+            rp,
+            cache_state["set_rr_state"],
+            cache_state.get("set_lfu_state", []),
+            cache_state["ways"],
+            cache_state["set_count"],
+            cache_state["set_tags"],
+            cache_state["used_ways"],
+            cache_state.get("set_lru_index", []),
+            cache_state.get("set_lru_state", []),
+        )
+
+    return full_associative(
+        block,
+        cache_state["lines"],
+        cache_state["valid"],
+        cache_state["tags"],
+        rp,
+        cache_state["rr_state"],
+        cache_state["lru_state"],
+        cache_state["lru_index"],
+        cache_state["lfu_state"],
+    )
+
 def sim_cache(data, cache_count):
     trace_file = sys.argv[2]
-
-    # L1 cache state.
-    cache_size_1 = data[0]["size"]
-    line_size_1 = data[0]["line_size"]
-    total_cache_lines_1 = cache_size_1 // line_size_1
-    valid_1 = bytearray(total_cache_lines_1) # Byte array for faster indexing and setting
-    tags_1 = [0] * total_cache_lines_1
-    hit_count_1 = miss_count_1 = 0
-    kind_1 = data[0]["kind"]
-    name_1 = data[0]["name"]
-    rp_1 = data[0].get("replacement_policy", "rr")
-    rr_state_1 = [0]
-    lru_state_1 = {}
-    lru_index_1 = [0]
-    lfu_state_1 = {}
-
-    use_n_way_1 = (kind_1 == "full" and "way" in name_1) or ("way" in kind_1)
-    if use_n_way_1:
-        way_src_1 = name_1 if "way" in name_1 else kind_1
-        set_size_1 = int(way_src_1.split("way", maxsplit=1)[0])
-        number_of_sets_1 = total_cache_lines_1 // set_size_1
-        n_lru_index = [[0] for _ in range(number_of_sets_1)]
-        n_lru_state_1 = [[0] * set_size_1 for _ in range(number_of_sets_1)]
-        lfu_state_nway_1 = [[0] * set_size_1 for _ in range(number_of_sets_1)]
-        n_rr_state_1 = [[0] for _ in range(number_of_sets_1)]
-        inner_index = [[0] for _ in range(number_of_sets_1)]
-        set_state_1 = [[-1] * set_size_1 for _ in range(number_of_sets_1)]
-    
-    
-
-    # L2 cache state (if configured).
-    if cache_count >= 2:
-        cache_size_2 = data[1]["size"]
-        line_size_2 = data[1]["line_size"]
-        total_cache_lines_2 = cache_size_2 // line_size_2
-        valid_2 = bytearray(total_cache_lines_2)
-        tags_2 = [0] * total_cache_lines_2
-        hit_count_2 = miss_count_2 = 0
-        kind_2 = data[1]["kind"]
-        name_2 = data[1]["name"]
-        rp_2 = data[1].get("replacement_policy", "rr")
-        rr_state_2 = [0]
-        lru_state_2 = {}
-        lru_index_2 = [0]
-        lfu_state_2 = {}
-        use_n_way_2 = (kind_2 == "full" and "way" in name_2) or ("way" in kind_2)
-        if use_n_way_2:
-            way_src_2 = name_2 if "way" in name_2 else kind_2
-            set_size_2 = int(way_src_2.split("way", maxsplit=1)[0])
-            number_of_sets_2 = total_cache_lines_2 // set_size_2
-            n_lru_index_2 = [[0] for _ in range(number_of_sets_2)]
-            n_lru_state_2 = [[0] * set_size_2 for _ in range(number_of_sets_2)]
-            lfu_state_nway_2 = [[0] * set_size_2 for _ in range(number_of_sets_2)]
-            n_rr_state_2 = [[0] for _ in range(number_of_sets_2)]
-            inner_index_2 = [[0] for _ in range(number_of_sets_2)]
-            set_state_2 = [[-1] * set_size_2 for _ in range(number_of_sets_2)]
-
-
-    # L3 cache state (if configured).
-    if cache_count == 3:
-        cache_size_3 = data[2]["size"]
-        line_size_3 = data[2]["line_size"]
-        total_cache_lines_3 = cache_size_3 // line_size_3
-        valid_3 = bytearray(total_cache_lines_3)
-        tags_3 = [0] * total_cache_lines_3
-        hit_count_3 = miss_count_3 = 0
-        kind_3 = data[2]["kind"]
-        name_3 = data[2]["name"]
-        rp_3 = data[2].get("replacement_policy", "rr")
-        rr_state_3 = [0]
-        lru_state_3 = {}
-        lru_index_3 = [0]
-        lfu_state_3 = {}
-        use_n_way_3 = (kind_3 == "full" and "way" in name_3) or ("way" in kind_3)
-        if use_n_way_3:
-            way_src_3 = name_3 if "way" in name_3 else kind_3
-            set_size_3 = int(way_src_3.split("way", maxsplit=1)[0])
-            number_of_sets_3 = total_cache_lines_3 // set_size_3
-            n_lru_index_3 = [[0] for _ in range(number_of_sets_3)]
-            n_lru_state_3 = [[0] * set_size_3 for _ in range(number_of_sets_3)]
-            lfu_state_nway_3 = [[0] * set_size_3 for _ in range(number_of_sets_3)]
-            n_rr_state_3 = [[0] for _ in range(number_of_sets_3)]
-            inner_index_3 = [[0] for _ in range(number_of_sets_3)]
-            set_state_3 = [[-1] * set_size_3 for _ in range(number_of_sets_3)]
+    caches = [build_cache(cache_config) for cache_config in data]
+    line_sizes = [cache_state["line_size"] for cache_state in caches]
+    total_cache_count = len(caches)
+    main_memory_accesses = 0
 
 
     try:
@@ -228,67 +236,33 @@ def sim_cache(data, cache_count):
                     memory_size = parse_int(trace_line[3])
 
                     # Handle accesses that span multiple cache lines.
-                    start_block_1 = memory_address // line_size_1
-                    end_block_1 = (memory_address + memory_size - 1) // line_size_1
+                    start_block_l1 = memory_address // line_sizes[0]
+                    end_block_l1 = (memory_address + memory_size - 1) // line_sizes[0]
 
-                    for block1 in range(start_block_1, end_block_1 + 1):
-                        if (kind_1 == "direct"):
-                            l1_hit = direct(block1, total_cache_lines_1, valid_1, tags_1)
-                        elif use_n_way_1:
-                            l1_hit = n_set_associative(block1, total_cache_lines_1, valid_1, rp_1, n_rr_state_1, lfu_state_nway_1, set_size_1, number_of_sets_1, set_state_1, inner_index, n_lru_index, n_lru_state_1)
-                        elif (kind_1 == "full"):
-                            l1_hit = full_associative(block1, total_cache_lines_1, valid_1, tags_1, rp_1 ,rr_state_1, lru_state_1, lru_index_1, lfu_state_1)
+                    for block_l1 in range(start_block_l1, end_block_l1 + 1):
+                        current_block = block_l1
 
+                        for level in range(total_cache_count):
+                            cache_state = caches[level]
+                            cache_hit = access_cache(cache_state, current_block)
 
-                        if l1_hit:
-                            hit_count_1 += 1
-                            continue
-                        else:
-                            miss_count_1 += 1
+                            if cache_hit:
+                                cache_state["hits"] += 1
+                                break
 
-                        if cache_count >= 2:
-                            block_addr = block1 * line_size_1
-                            block2 = block_addr // line_size_2
+                            cache_state["misses"] += 1
+                            if level == total_cache_count - 1:
+                                main_memory_accesses += 1
+                                break
 
-                            if (kind_2 == "direct"):
-                                l2_hit = direct(block2, total_cache_lines_2, valid_2, tags_2)
-                            elif use_n_way_2:
-                                l2_hit = n_set_associative(block2, total_cache_lines_2, valid_2, rp_2, n_rr_state_2, lfu_state_nway_2, set_size_2, number_of_sets_2, set_state_2, inner_index_2, n_lru_index_2, n_lru_state_2)
-                            elif (kind_2 == "full"):
-                                l2_hit = full_associative(block2, total_cache_lines_2, valid_2, tags_2, rp_2,rr_state_2, lru_state_2, lru_index_2, lfu_state_2)
-
-                            if l2_hit:
-                                hit_count_2 += 1
-                            else:
-                                miss_count_2 += 1
-
-                                if cache_count == 3:
-                                    block_addr2 = block2 * line_size_2
-                                    block3 = block_addr2 // line_size_3
-
-                                    if (kind_3 == "direct"):
-                                        l3_hit = direct(block3, total_cache_lines_3, valid_3, tags_3)
-                                    elif use_n_way_3:
-                                        l3_hit = n_set_associative(block3, total_cache_lines_3, valid_3, rp_3, n_rr_state_3, lfu_state_nway_3, set_size_3, number_of_sets_3, set_state_3, inner_index_3, n_lru_index_3, n_lru_state_3)
-                                    elif (kind_3 == "full"):
-                                        l3_hit = full_associative(block3, total_cache_lines_3, valid_3, tags_3, rp_3,rr_state_3, lru_state_3, lru_index_3, lfu_state_3)
-
-                                    if l3_hit:
-                                        hit_count_3 += 1
-                                    else:
-                                        miss_count_3 += 1
+                            next_level = level + 1
+                            current_block = (
+                                (current_block * line_sizes[level]) // line_sizes[next_level]
+                            )
                     line = read_line()
 
     except FileNotFoundError:
         print(f"Error: The file: {trace_file} was not found.", file=sys.stderr)
         sys.exit(1)
 
-    if cache_count == 1:
-        return hit_count_1, miss_count_1
-    elif cache_count == 2:
-        return hit_count_1, miss_count_1, hit_count_2, miss_count_2
-    elif cache_count == 3:
-        return hit_count_1, miss_count_1, hit_count_2, miss_count_2, hit_count_3, miss_count_3
-    else:
-        print("Error; only 1, 2, or 3 caches supported.", file=sys.stderr)
-        sys.exit(1)
+    return caches, main_memory_accesses
