@@ -1,2 +1,5 @@
-Please run the codebase using:
-pypy3 -O main.py <config.file> <trace.file>
+To print the JSON formatted results to stdout:
+Run the cache simulator using: pypy3 -O main.py <config.file> <trace.file>
+
+To print the JSON formatted results to a file:
+Run the cache simulator using: pypy3 -O main.py <config.file> <trace.file> > <results.file>

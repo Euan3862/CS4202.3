@@ -1,6 +1,10 @@
 import sys
 import json
 
+"""
+Parse cache configuration file and gather the data of each cache,
+as well as the total number of caches to be simulated.
+"""
 def parse_config_file():
     if len(sys.argv) < 3:
         print("Usage: python cache_sim.py <config.json> <trace_file>")
