@@ -5,7 +5,7 @@ import sys
 This program simulates a cache hierarchy with cache configurations set by a JSON config file and a memory trace to simulate. 
 Each cache level gets its own access function built up front so that the returned function already knows its replacement policy and internal state.
 This means that each trace lookup can just call it and get a hit or miss result quickly.
-The simulator then reads the trace file lines in order, splits accesses that cross cache-line boundaires, checks L1 and then proceeding levels until it hits, or otherwise
+The simulator then reads the trace file lines in order, splits accesses that cross cache-line boundaries, checks L1 and then proceeds through lower levels until it hits, or otherwise
 misses through to 'main memory', block numbers are converted between different line sizes, and lastly hit/miss counts per cache are recorded as well as the total of 
 main-memory accesses for the simulated trace file.
 """
@@ -23,12 +23,13 @@ def direct_accessor(total_cache_lines, valid_bits, tags):
     """
     Builds and returns a direct-mapped cache access function where the access function
     takes a block number and returns True if hit and false if a miss. The cache state is
-    updated when needed ie cache fills/evicts.
+    updated when needed, ie on cache fills/evictions.
     """
     def access(block):
         # As all counts are powers of two, block % lines can be done bitwise as block & (lines - 1) which provides speed improvements.
         line_index = block & (total_cache_lines - 1)
-        tag = block // total_cache_lines
+        tag_shift = total_cache_lines.bit_length() - 1
+        tag = block >> tag_shift
 
         # If line has not been used yet, fill it and return a miss.
         if (not valid_bits[line_index]):
@@ -48,10 +49,10 @@ def direct_accessor(total_cache_lines, valid_bits, tags):
 
 
 # Fully associative wrapper function to keep cache setup out of the hot loop
-def full_accessor(replacement_policy, total_cache_lines, valid_bits, tags, tag_to_line, free_lines):
+def full_accessor(replacement_policy, total_cache_lines,tags, tag_to_line, free_lines):
     """
     The policy is chosen once here (rr/lru/lfu) and the matching access function is returned.
-    This keeps the replacement policy branching out of the hotloop and prevents multiple checks.
+    This keeps the replacement policy branching out of the hot loop and prevents multiple checks.
     """
     if (replacement_policy == "rr"):
         round_robin_pointer = 0 # RR pointer that increments through all cache-lines then resets to the beginning.
@@ -76,8 +77,6 @@ def full_accessor(replacement_policy, total_cache_lines, valid_bits, tags, tag_t
                 if tag_to_line.get(old_tag) == victim_line:
                     del tag_to_line[old_tag]
 
-            # Set victim line to valid and 
-            valid_bits[victim_line] = 1 # Set new block to valid
             tags[victim_line] = block # Update the victim line with new block
             tag_to_line[block] = victim_line # Update tag to line dict with the new line
             return False
@@ -102,7 +101,7 @@ def full_accessor(replacement_policy, total_cache_lines, valid_bits, tags, tag_t
             if (free_lines):
                 victim_line = free_lines.pop() 
             else:
-                # Otherwsie, cache is full so select oldest line by smallest tick and evict.
+                # Otherwise, cache is full so select the oldest line (smallest tick) and evict it.
                 victim_line = 0
                 oldest_tick = lru_state[0]
                 for line_index in range(1, total_cache_lines):
@@ -116,7 +115,6 @@ def full_accessor(replacement_policy, total_cache_lines, valid_bits, tags, tag_t
                     del tag_to_line[old_tag]
 
             # Setting victim line to valid, entering the new tag, and incrementing lru counter.
-            valid_bits[victim_line] = 1
             tags[victim_line] = block
             tag_to_line[block] = victim_line
             lru_state[victim_line] = lru_tick
@@ -148,7 +146,7 @@ def full_accessor(replacement_policy, total_cache_lines, valid_bits, tags, tag_t
             heap_size += 1
             rebalance_lfu_heap_up(min_heap, heap_positions, lfu_state, heap_size - 1)
         else:
-            #Cache is fullm LFU victim is always root of the heap (min_heap[0]).
+            # Cache is full; LFU victim is always the root of the heap (min_heap[0]).
             victim_line = min_heap[0]
             old_tag = tags[victim_line]
 
@@ -159,7 +157,6 @@ def full_accessor(replacement_policy, total_cache_lines, valid_bits, tags, tag_t
             lfu_state[victim_line] = 1
 
             # Root element line id stays the same, so heap structure stays valid (Least used cache line)
-        valid_bits[victim_line] = 1
         tags[victim_line] = block
         tag_to_line[block] = victim_line
         return False
@@ -257,7 +254,7 @@ def set_accessor(replacement_policy, number_of_ways, number_of_sets, set_tags, u
         return access
 
     if replacement_policy == "lru":
-        # Independent tick count and state for each state.
+        # Independent tick counter and LRU state for each set.
         set_lru_ticks = [0] * number_of_sets
         set_lru_state = [[0] * number_of_ways for _ in range(number_of_sets)]
 
@@ -275,7 +272,7 @@ def set_accessor(replacement_policy, number_of_ways, number_of_sets, set_tags, u
                     set_lru_ticks[set_index] = lru_tick + 1
                     return True
 
-            if (number_of_ways > ways_used): # If there are free ways avaliable, fill them before evicting others.
+            if (number_of_ways > ways_used): # If there are free ways available, fill them before evicting others.
                 tags[ways_used] = tag
                 used_ways[set_index] = ways_used + 1
                 lru_state[ways_used] = lru_tick
@@ -328,7 +325,7 @@ def set_accessor(replacement_policy, number_of_ways, number_of_sets, set_tags, u
             min_heap[heap_size] = ways_used   # Add this way to the end of the set's LFU heap and record reverse position ie heap index's mapping to way.
             heap_positions[ways_used] = heap_size
             set_heap_sizes[set_index] = heap_size + 1
-            rebalance_lfu_heap_up(min_heap, heap_positions, lfu_state, heap_size)             # Rebalance heap order after adding the new way.
+            rebalance_lfu_heap_up(min_heap, heap_positions, lfu_state, heap_size)    # Rebalance heap order after adding the new way.
             return False
 
         #Otherwise if not returned by here, set is full and LFU victim is root of the heap.
@@ -350,12 +347,15 @@ def build_cache(cache_config):
     cache_state = {"name": cache_config["name"], "line_size": line_size, "hits": 0, "misses": 0}
 
     if (cache_kind == "direct"):
+        # Using a bytearray for valid bits because it stores only 0/1 bytes and 
+        # is faster/'lighter' than a list of bools which would store them as full Python objects.
+        # This reduces memory overhead and provides faster access times.
         valid_bits = bytearray(total_cache_lines)
         tags = [0] * total_cache_lines
         cache_state["access"] = direct_accessor(total_cache_lines, valid_bits, tags)
         return cache_state
 
-    if ("way" in cache_kind): # Way in cache kind indicates its n-way-associative
+    if ("way" in cache_kind): # Way in cache kind indicates its value for n in n-way-associative
         number_of_ways = int(cache_kind.split("way", maxsplit=1)[0])
         number_of_sets = total_cache_lines // number_of_ways
         set_tags = [[-1] * number_of_ways for _ in range(number_of_sets)]
@@ -364,11 +364,10 @@ def build_cache(cache_config):
         return cache_state
 
     # Support fully-associative kind ("full").
-    valid_bits = bytearray(total_cache_lines)
     tags = [0] * total_cache_lines
     tag_to_line = {}
     free_lines = list(range(total_cache_lines - 1, -1, -1))
-    cache_state["access"] = full_accessor(replacement_policy, total_cache_lines, valid_bits, tags, tag_to_line, free_lines)
+    cache_state["access"] = full_accessor(replacement_policy, total_cache_lines, tags, tag_to_line, free_lines)
     return cache_state
 
 
@@ -399,10 +398,9 @@ def sim_cache(data, cache_count):
                 parse_int = int
                 line = read_line()
 
-                while (line): # Trace format- <pc> <address> <R/W> <size>
-                    trace_fields = line.split(maxsplit=3)
-                    memory_address = parse_int(trace_fields[1], 16)
-                    memory_size = parse_int(trace_fields[3])
+                while (line): # Trace format is: <pc> <address> <R/W> <size>
+                    memory_address = parse_int(line[17:33], 16)
+                    memory_size = parse_int(line[36:39])
 
                     # An access can cross multiple L1 lines, so process each touched block.
                     start_block = memory_address // first_level_line_size
